@@ -91,9 +91,10 @@ describe('node', () => {
 	before(() => {
 		vm = new VM();
 	});
-	it.skip('inspect', () => {
+	it('inspect', () => {
 		assert.throws(() => inspect(doubleProxy), /Expected/);
-		if (NODE_VERSION !== 10) {
+		assert.doesNotThrow(() => inspect(vm.run('({})'), {showProxy: true, customInspect: true}));
+		if (NODE_VERSION !== 10 && false) {
 			// This failes on node 10 since they do not unwrap proxys.
 			// And the hack to fix this is only in the inner proxy.
 			// We could add another hack, but that one would require
@@ -662,12 +663,12 @@ describe('VM', () => {
 
 	it('internal state attack', () => {
 		const vm2 = new VM();
-		assert.throws(() => vm2.run(`${INTERNAL_STATE_NAME}=1;`), /Use of internal vm2 state variable/);
-		assert.throws(() => vm2.run(`const ${INTERNAL_STATE_NAME} = {};`), /Use of internal vm2 state variable/);
-		assert.throws(() => vm2.run(`var ${INTERNAL_STATE_NAME} = {};`), /Use of internal vm2 state variable/);
-		assert.throws(() => vm2.run(`let ${INTERNAL_STATE_NAME} = {};`), /Use of internal vm2 state variable/);
-		assert.throws(() => vm2.run(`class ${INTERNAL_STATE_NAME} {};`), /Use of internal vm2 state variable/);
-		assert.throws(() => vm2.run(`function ${INTERNAL_STATE_NAME} () {};`), /Use of internal vm2 state variable/);
+		assert.throws(() => vm2.run(`${INTERNAL_STATE_NAME}="async";`), /Use of internal vm2 state variable/);
+		assert.throws(() => vm2.run(`const ${INTERNAL_STATE_NAME} = "async";`), /Use of internal vm2 state variable/);
+		assert.throws(() => vm2.run(`var ${INTERNAL_STATE_NAME} = "async";`), /Use of internal vm2 state variable/);
+		assert.throws(() => vm2.run(`let ${INTERNAL_STATE_NAME} = "async";`), /Use of internal vm2 state variable/);
+		assert.throws(() => vm2.run(`class ${INTERNAL_STATE_NAME} {}; // async`), /Use of internal vm2 state variable/);
+		assert.throws(() => vm2.run(`function ${INTERNAL_STATE_NAME} () {}; // async`), /Use of internal vm2 state variable/);
 	});
 
 	it('buffer attack', () => {
@@ -1057,6 +1058,25 @@ describe('VM', () => {
 		const sst = vm2.run('Error.prepareStackTrace = (e,sst)=>sst;const sst = new Error().stack;Error.prepareStackTrace = undefined;sst');
 		assert.strictEqual(vm2.run('sst=>Object.getPrototypeOf(sst)')(sst), vm2.run('Array.prototype'));
 		assert.throws(()=>vm2.run('sst=>sst[0].getThis().constructor.constructor')(sst), /TypeError: Cannot read propert.*constructor/);
+		assert.throws(()=>vm2.run(`
+			const { set } = WeakMap.prototype;
+			WeakMap.prototype.set = function(v) {
+				return set.call(this, v, v);
+			};
+			Error.prepareStackTrace =
+			Error.prepareStackTrace =
+			(_, c) => c.map(c => c.getThis()).find(a => a);
+			const { stack } = new Error();
+			Error.prepareStackTrace = undefined;
+			stack.process
+		`));
+		assert.throws(()=>vm2.run(`(()=>{
+			const OldError = Error;
+			global.Error = {prepareStackTrace: (_, c) => c.map(c => c.getThis()).find(a => a && a.process)};
+			const { stack } = new OldError();
+			global.Error = OldError;
+			return stack.process.mainModule;
+		})()`));
 	});
 
 	it('Node internal prepareStackTrace attack', () => {
